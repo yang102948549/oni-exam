@@ -1,0 +1,14 @@
+__pycache__/
+*.pyc
+# 원본 시험지 PDF·자료와 중간 산출물은 제외
+/국어.pdf
+/영어.pdf
+test_inputs/
+work/figs*/
+work/*.png
+work/*_lines.txt
+output/*/*.png
+output/native_*/
+output/korean_exam_test/
+output/eq_probe/
+*.zip
