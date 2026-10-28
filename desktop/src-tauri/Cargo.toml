@@ -1,6 +1,6 @@
 [package]
 name = "oni-exam"
-version = "0.1.0"
+version = "0.2.0"
 description = "Oni School PDF to HWPX desktop workspace"
 edition = "2021"
 

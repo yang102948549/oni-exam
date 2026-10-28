@@ -64,7 +64,10 @@ class EngineTests(unittest.TestCase):
             for name in z.namelist():
                 if name.endswith('.xml'): ET.fromstring(z.read(name))
             faces = {n.attrib['face'] for n in header.iter() if n.tag.endswith('}font')}
-            self.assertTrue(set(worker.FONTS[:3]).issubset(faces))
+            self.assertTrue(set(worker.FONTS).issubset(faces))
+        env = self.call('install_fonts')
+        self.assertEqual([f['name'] for f in env['fonts']], worker.FONTS)
+        self.assertTrue(all(f['installed'] for f in env['fonts']))
         second = self.call('convert', **kwargs)
         self.assertNotEqual(result['output'], second['output'])
         self.assertEqual(p.read_bytes(), original)
@@ -76,6 +79,9 @@ class EngineTests(unittest.TestCase):
         with self.assertRaises(ValueError): self.call('convert', path=str(p), first=2, last=1, outputDir=str(self.root))
         self.call('save_settings', value={'outputDir': str(self.root)})
         self.assertEqual(self.call('settings')['outputDir'], str(self.root))
+        self.assertGreater(worker._ver_tuple('0.2.0'), worker._ver_tuple('0.1.0'))
+        with self.assertRaises(ValueError):
+            self.call('install_update', downloadUrl='https://example.com/evil.exe')
 
 
 if __name__ == '__main__': unittest.main()

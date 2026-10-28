@@ -1,15 +1,16 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { listen } from '@tauri-apps/api/event';
 import { getCurrentWebview } from '@tauri-apps/api/webview';
-import { ArrowDownToLine, ArrowRight, BookOpen, Check, CheckCircle2, ChevronLeft, ChevronRight, CircleHelp, Clock3, FileCheck2, FilePlus2, FileText, FolderOpen, History, Info, Loader2, LockKeyhole, Monitor, Plus, Search, Settings2, ShieldCheck, SlidersHorizontal, Type, Upload, X } from 'lucide-react';
+import { ArrowDownToLine, ArrowRight, BookOpen, Check, CheckCircle2, ChevronLeft, ChevronRight, CircleHelp, Clock3, Download, FileCheck2, FilePlus2, FileText, FolderOpen, History, Info, Loader2, LockKeyhole, Monitor, Plus, RefreshCw, Search, Settings2, ShieldCheck, SlidersHorizontal, Type, Upload, X } from 'lucide-react';
 import { chooseFolder, choosePdf, engine, native, openLocal, parentPath } from './bridge';
-import type { Environment, Job, PdfInfo, Progress, Settings } from './types';
+import type { Environment, Job, PdfInfo, Progress, Settings, UpdateInfo } from './types';
 
+const APP_VERSION = '0.2.0';
 type View = 'convert' | 'history' | 'settings' | 'help';
 const labels: Record<View, string> = { convert: '새 문제지', history: '작업 기록', settings: '환경 설정', help: '사용 안내' };
 const subjects = ['국어', '영어', '수학', '한국사', '사회탐구', '과학탐구'];
-const fontRoles = ['본문 · serif', '제목 · sans', '숫자 · 기호', '수식'];
-const fontNames = ['KoPub World 바탕체', 'KoPub World 돋움체', 'KoPub World 돋움체', 'HyhwpEQ'];
+const fontRoles = ['문제 본문 (95% · -5%)', '표 · 일러스트 (11.5pt · 95% · -5%)', '문항 번호 · 교시 제목', '5지선다형 · 단답형 번호', '수식 · 숫자'];
+const fontNames = ['신명 중명조', '문체부 돋음체', '한양견명조', '신명 태고딕', 'HyhwpEQ'];
 const dateText = (s: string) => new Intl.DateTimeFormat('ko-KR', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }).format(new Date(s));
 const sizeText = (n: number) => n >= 1048576 ? `${(n / 1048576).toFixed(1)} MB` : `${Math.round(n / 1024)} KB`;
 
@@ -35,6 +36,9 @@ export default function App() {
   const [outputDir, setOutputDir] = useState('');
   const [jobs, setJobs] = useState<Job[]>([]);
   const [env, setEnv] = useState<Environment | null>(null);
+  const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
+  const [checkingUpdate, setCheckingUpdate] = useState(false);
+  const [installingUpdate, setInstallingUpdate] = useState(false);
   const [loading, setLoading] = useState(false);
   const [converting, setConverting] = useState(false);
   const [dragging, setDragging] = useState(false);
@@ -48,15 +52,47 @@ export default function App() {
   const [search, setSearch] = useState('');
   const busyRef = useRef(false);
   const previewId = useRef(0);
-  const pending = loading || converting;
+  const pending = loading || converting || installingUpdate;
   const fail = useCallback((e: unknown) => setError(String(e instanceof Error ? e.message : e)), []);
   const refreshHistory = useCallback(() => engine<Job[]>({ action: 'history' }).then(setJobs).catch(fail), [fail]);
+  const checkUpdate = useCallback(async (silent = false) => {
+    if (!native || checkingUpdate || installingUpdate) return;
+    setCheckingUpdate(true);
+    try {
+      const info = await engine<UpdateInfo>({ action: 'check_update', currentVersion: APP_VERSION });
+      setUpdateInfo(info);
+      if (!silent) {
+        setNotice(info.hasUpdate ? `새 버전(v${info.latestVersion})을 사용할 수 있어요.` : `현재 최신 버전(v${info.currentVersion})을 사용 중입니다.`);
+      }
+    } catch (e) {
+      if (!silent) fail(e);
+    } finally {
+      setCheckingUpdate(false);
+    }
+  }, [checkingUpdate, installingUpdate, fail]);
+  const installUpdate = useCallback(async () => {
+    if (!updateInfo?.downloadUrl || busyRef.current || installingUpdate) return;
+    busyRef.current = true;
+    setInstallingUpdate(true);
+    setError('');
+    setProgress({ stage: 'update', percent: 5, message: '업데이트 설치 파일을 준비하고 있어요.' });
+    try {
+      await engine({ action: 'install_update', downloadUrl: updateInfo.downloadUrl });
+      setNotice('설치 프로그램이 실행되었습니다. 잠시 후 앱이 닫히고 업데이트가 진행됩니다.');
+    } catch (e) {
+      fail(e);
+      setProgress(null);
+      busyRef.current = false;
+      setInstallingUpdate(false);
+    }
+  }, [updateInfo, installingUpdate, fail]);
 
   useEffect(() => {
     if (!native) return;
     void refreshHistory();
     void engine<Settings>({ action: 'settings' }).then(s => setOutputDir(s.outputDir)).catch(fail);
     void engine<Environment>({ action: 'environment' }).then(setEnv).catch(fail);
+    void checkUpdate(true);
     const stops = [listen<Progress>('engine-progress', e => setProgress(e.payload)), listen<string>('close-blocked', e => setNotice(e.payload))];
     return () => { stops.forEach(p => { void p.then(stop => stop()); }); };
   }, [fail, refreshHistory]);
@@ -121,15 +157,25 @@ export default function App() {
       </nav>
       <div className="sidebar-bottom">
         <div className="local-note"><ShieldCheck size={17}/><div><strong>내 PC에서 안전하게</strong><p>파일은 서버에 업로드되지 않아요.</p></div></div>
-        <button className={`nav-item ${view === 'settings' ? 'active' : ''}`} onClick={() => setView('settings')}><Settings2 size={18}/>환경 설정</button>
+        <button className={`nav-item ${view === 'settings' ? 'active' : ''}`} onClick={() => setView('settings')}><Settings2 size={18}/>환경 설정{updateInfo?.hasUpdate && <span className="nav-count"><span className="badge success">UP</span></span>}</button>
         <button className={`nav-item ${view === 'help' ? 'active' : ''}`} onClick={() => setView('help')}><CircleHelp size={18}/>사용 안내</button>
-        <div className="sidebar-footer"><span>Oni School</span><span>v0.1.0</span></div>
+        <div className="sidebar-footer"><span>Oni School</span><span>v{APP_VERSION}</span></div>
       </div>
     </aside>
     <div className="app-body">
       <header className="topbar"><div><span className="muted">작업실</span><ChevronRight size={13}/><span>{labels[view]}</span></div><span className="local-status"><i/>{native ? '로컬 작업 공간' : '화면 미리보기'}</span></header>
       <main>
         {error && <div className="alert error" role="alert"><Info size={17}/><span>{error}</span><button aria-label="오류 메시지 닫기" onClick={() => setError('')}><X size={16}/></button></div>}
+        {updateInfo?.hasUpdate && view !== 'settings' && <div className="panel" style={{ padding: '12px 16px', marginBottom: 18, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, borderColor: '#cddcf0', background: '#f5f9ff' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <Download size={17} color="#1b70c9"/>
+            <span><strong>Oni Exam v{updateInfo.latestVersion}</strong> 업데이트가 있습니다. (현재 v{APP_VERSION})</span>
+          </div>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button className="button small-button" onClick={() => setView('settings')}>자세히</button>
+            <button className="button primary small-button" disabled={pending} onClick={() => void installUpdate()}>{installingUpdate ? <Loader2 size={13} className="spin"/> : <Download size={13}/>}지금 업데이트</button>
+          </div>
+        </div>}
         {notice && <div className="toast" role="status"><Info size={16}/>{notice}</div>}
         {view === 'convert' && <>
           <div className="page-heading"><div><div className="eyebrow"><span/> PDF TO HWPX</div><h1>수업 준비에, 한결 여유를.</h1><p>PDF 문제지를 편집 가능한 한글 문서로 바꿔보세요.</p></div><span className="heading-tag"><LockKeyhole size={14}/>오프라인 변환</span></div>
@@ -148,7 +194,7 @@ export default function App() {
                 {['사회탐구', '과학탐구'].includes(subject) && <label className="field subtitle-field">세부 과목<input value={subtitle} maxLength={60} placeholder="예: 사회·문화, 물리학Ⅰ" disabled={pending} onChange={e => setSubtitle(e.target.value)}/></label>}
                 {pdf && !rangeValid && <p className="error-text">1~{pdf.pages}쪽 안에서 시작·끝 페이지를 지정해 주세요.</p>}
                 <label className="check-row"><input type="checkbox" checked={math} disabled={pending} onChange={e => setMath(e.target.checked)}/><span>수식 및 도형 분석<span className="caption">수학·과학 문제지에 권장</span></span><span className="badge neutral">실험 기능</span></label>
-                <div className="font-summary"><Type size={16}/><div><strong>Oni 기본 글꼴</strong><span>KoPub World 바탕체 · 돋움체 · HyhwpEQ</span></div><button className="text-button" onClick={() => setView('settings')}>확인<ChevronRight size={13}/></button></div>
+                <div className="font-summary"><Type size={16}/><div><strong>Oni 기본 글꼴 (자동 설치)</strong><span>신명 중명조 · 문체부 돋음체 · 한양견명조 · 신명 태고딕 · HyhwpEQ</span></div><button className="text-button" onClick={() => setView('settings')}>확인<ChevronRight size={13}/></button></div>
                 <div className="field output-field">저장 위치<div className="folder-field"><FolderOpen size={16}/><span title={outputDir}>{outputDir || '원본 파일을 선택하면 같은 폴더에 저장해요'}</span><button onClick={() => void folder()} disabled={pending}>변경</button></div></div>
                 <button className="button primary convert-button" onClick={() => void convert()} disabled={pending || !pdf || !pdf.hasText || !pdf.compatible || !rangeValid || !outputDir}>{converting ? <Loader2 size={17} className="spin"/> : <ArrowDownToLine size={17}/>} {converting ? '문제지 만드는 중' : '한글 문제지 만들기'}{!converting && <ArrowRight size={17}/>}</button>
                 <p className="save-note">HWPX로 저장 · 원본 PDF는 그대로 보관됩니다.</p>
@@ -162,7 +208,45 @@ export default function App() {
           <section className="recent"><div className="section-heading"><h2>최근 작업</h2><button className="text-button" onClick={() => setView('history')}>전체 보기<ChevronRight size={14}/></button></div>{jobs.length ? <JobRows jobs={jobs.slice(0,3)} onOpen={open}/> : <div className="history-empty"><Clock3 size={18}/><span>완성한 문제지는 여기에 차곡차곡 모여요.</span></div>}</section>
         </>}
         {view === 'history' && <><div className="page-heading"><div><div className="eyebrow">YOUR WORKSPACE</div><h1>작업 기록</h1><p>이 PC에서 만든 문제지를 다시 열어보세요.</p></div><button className="button primary" onClick={() => setView('convert')}><Plus size={16}/>새 문제지</button></div><div className="history-toolbar"><span>전체 <strong>{jobs.length}</strong>개</span><label className="search"><Search size={16}/><input aria-label="작업 검색" placeholder="파일명 또는 과목 검색" value={search} onChange={e => setSearch(e.target.value)}/></label></div><section className="panel">{filtered.length ? <JobRows jobs={filtered} onOpen={open}/> : <div className="large-empty"><History size={32}/><h2>{search ? '검색 결과가 없어요' : '아직 작업 기록이 없어요'}</h2><p>{search ? '다른 파일명이나 과목으로 검색해 보세요.' : '첫 문제지를 만들면 이곳에서 다시 찾을 수 있어요.'}</p>{!search && <button className="button" onClick={() => setView('convert')}>문제지 만들러 가기<ArrowRight size={15}/></button>}</div>}</section></>}
-        {view === 'settings' && <><div className="page-heading"><div><div className="eyebrow">PREFERENCES</div><h1>편안한 작업을 위한 설정</h1><p>저장 위치와 문서에 사용할 글꼴을 확인하세요.</p></div></div><section className="panel preferences"><div className="panel-heading"><h2><FolderOpen size={18}/>기본 저장 위치</h2></div><div className="preference-content"><p>새로운 문제지를 저장할 폴더입니다. 선택하면 자동으로 저장돼요.</p><div className="folder-field"><FolderOpen size={16}/><span title={outputDir}>{outputDir || '원본 PDF와 같은 폴더'}</span><button disabled={pending} onClick={() => void folder()}>폴더 선택</button></div></div></section><section className="panel preferences"><div className="panel-heading"><h2><Type size={18}/>문제지 글꼴</h2><span className="caption">지정된 기본 서체</span></div><div className="font-list">{fontNames.map((f, i) => <div className="font-row" key={fontRoles[i]}><span>{fontRoles[i]}</span><strong>{f}</strong><span className={`badge ${env?.fonts[i].installed ? 'success' : 'neutral'}`}>{env ? env.fonts[i].installed ? <><Check size={12}/>설치됨</> : '설치 확인 필요' : '앱에서 확인'}</span></div>)}</div><p className="preference-note"><Info size={15}/>글꼴이 없으면 한글에서 다른 글꼴로 표시될 수 있어요. 글꼴 파일은 앱에 포함되지 않습니다.</p></section><section className="panel preferences"><div className="panel-heading"><h2><Monitor size={18}/>실행 환경</h2><button className="text-button" onClick={() => { void engine<Environment>({ action: 'environment' }).then(setEnv).catch(fail); }}>다시 확인</button></div><div className="font-list"><div className="font-row"><span>한글 프로그램</span><strong>{env ? env.hancom ? '한글 설치 확인됨' : '한글 설치 확인 필요' : '데스크탑 앱에서 확인'}</strong></div><div className="font-row"><span>저장 방식</span><strong>로컬 파일 · SQLite 작업 기록</strong><LockKeyhole size={15}/></div></div><p className="preference-note">HWPX 생성은 한글 없이 가능합니다. 문서 편집과 최종 배치 확인에는 한글이 필요합니다.</p></section></>}
+        {view === 'settings' && <><div className="page-heading"><div><div className="eyebrow">PREFERENCES</div><h1>편안한 작업을 위한 설정</h1><p>저장 위치와 문서에 사용할 글꼴, 프로그램 업데이트를 확인하세요.</p></div></div>
+          <section className="panel preferences">
+            <div className="panel-heading">
+              <h2><RefreshCw size={18}/>프로그램 업데이트</h2>
+              <button className="text-button" disabled={checkingUpdate || installingUpdate} onClick={() => void checkUpdate(false)}>
+                {checkingUpdate ? <Loader2 size={13} className="spin"/> : <RefreshCw size={13}/>}업데이트 확인
+              </button>
+            </div>
+            <div className="font-list">
+              <div className="font-row">
+                <span>현재 버전</span>
+                <strong>Oni Exam v{APP_VERSION}</strong>
+                <span className={`badge ${updateInfo?.hasUpdate ? 'neutral' : 'success'}`}>
+                  {updateInfo ? (updateInfo.hasUpdate ? `새 버전 v${updateInfo.latestVersion} 출시` : <><Check size={12}/>최신 버전</>) : '확인 가능'}
+                </span>
+              </div>
+              {updateInfo && <div className="font-row">
+                <span>최신 릴리스</span>
+                <strong>v{updateInfo.latestVersion} {updateInfo.assetSize ? `(${sizeText(updateInfo.assetSize)})` : ''}</strong>
+                {updateInfo.hasUpdate ? (
+                  <button className="button primary small-button" disabled={pending} onClick={() => void installUpdate()}>
+                    {installingUpdate ? <Loader2 size={13} className="spin"/> : <Download size={13}/>}
+                    {installingUpdate ? '업데이트 설치 중' : '다운로드 및 자동 업데이트'}
+                  </button>
+                ) : (
+                  <span className="caption">최신 상태입니다</span>
+                )}
+              </div>}
+            </div>
+            {installingUpdate && progress && <div style={{ padding: '0 20px 16px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: '#595955', marginBottom: 6 }}>
+                <span>{progress.message}</span>
+                <span>{progress.percent}%</span>
+              </div>
+              <progress value={progress.percent} max={100} style={{ width: '100%', height: 4 }}/>
+            </div>}
+            <p className="preference-note"><Info size={15}/>새 버전이 출시되면 GitHub Releases에서 설치 파일을 내려받아 실행한 뒤 자동으로 업데이트합니다.</p>
+          </section>
+          <section className="panel preferences"><div className="panel-heading"><h2><FolderOpen size={18}/>기본 저장 위치</h2></div><div className="preference-content"><p>새로운 문제지를 저장할 폴더입니다. 선택하면 자동으로 저장돼요.</p><div className="folder-field"><FolderOpen size={16}/><span title={outputDir}>{outputDir || '원본 PDF와 같은 폴더'}</span><button disabled={pending} onClick={() => void folder()}>폴더 선택</button></div></div></section><section className="panel preferences"><div className="panel-heading"><h2><Type size={18}/>문제지 글꼴</h2><button className="text-button" onClick={() => { void engine<Environment>({ action: 'install_fonts' }).then(e => { setEnv(e); setNotice('문제지 글꼴 자동 설치 및 확인을 완료했어요.'); }).catch(fail); }}>글꼴 자동 설치 / 다시 확인</button></div><div className="font-list">{fontNames.map((f, i) => <div className="font-row" key={fontRoles[i]}><span>{fontRoles[i]}</span><strong>{f}</strong><span className={`badge ${env?.fonts[i]?.installed ? 'success' : 'neutral'}`}>{env ? env.fonts[i]?.installed ? <><Check size={12}/>설치됨</> : '설치 확인 필요' : '앱에서 확인'}</span></div>)}</div><p className="preference-note"><Info size={15}/>수능형 문제지 서체 5종이 앱에 내장되어 있으며, 앱 실행 및 문제지 변환 시 Windows 사용자 글꼴로 자동 설치됩니다.</p></section><section className="panel preferences"><div className="panel-heading"><h2><Monitor size={18}/>실행 환경</h2><button className="text-button" onClick={() => { void engine<Environment>({ action: 'environment' }).then(setEnv).catch(fail); }}>다시 확인</button></div><div className="font-list"><div className="font-row"><span>한글 프로그램</span><strong>{env ? env.hancom ? '한글 설치 확인됨' : '한글 설치 확인 필요' : '데스크탑 앱에서 확인'}</strong></div><div className="font-row"><span>저장 방식</span><strong>로컬 파일 · SQLite 작업 기록</strong><LockKeyhole size={15}/></div></div><p className="preference-note">HWPX 생성은 한글 없이 가능합니다. 문서 편집과 최종 배치 확인에는 한글이 필요합니다.</p></section></>}
         {view === 'help' && <><div className="page-heading"><div><div className="eyebrow">GETTING STARTED</div><h1>첫 문제지를 만들어볼까요?</h1><p>원본을 고르고, 필요한 범위를 정하면 준비가 끝나요.</p></div></div><section className="panel help-panel">{[{ icon: Upload, title: '수능형 PDF를 선택하세요', text: '텍스트를 선택할 수 있는 842 × 1191pt 크기의 2단 문제지를 지원합니다. 스캔본이나 다른 판형은 현재 지원하지 않습니다.' },{ icon: SlidersHorizontal, title: '과목과 페이지를 지정하세요', text: '필요한 페이지만 골라 변환할 수 있어요. 수학·과학은 수식 및 도형 분석을 켜주세요. 수식 인식은 실험 기능으로 결과 검토가 필요합니다.' },{ icon: FileCheck2, title: '한글에서 마무리하세요', text: '생성된 HWPX에는 편집 가능한 문단과 수식이 들어갑니다. 원본 미리보기와 비교하며 누락, 줄바꿈, 도형과 수식 배치를 확인하세요. 원본과 완전히 같은 조판은 보장하지 않습니다.' }].map((x,i) => <div className="help-step" key={x.title}><span className="help-step-icon"><x.icon size={23}/></span><div><span className="caption">STEP 0{i+1}</span><h2>{x.title}</h2><p>{x.text}</p></div></div>)}</section><div className="help-bottom"><ShieldCheck size={20}/><p>원본과 변환 파일은 내 PC에 보관됩니다.<br/>로그인이나 인터넷 연결 없이 작업할 수 있어요.</p></div></>}
         <footer className="page-footer"><span>수업과 기록을 더 편안하게.</span><span>Oni School</span></footer>
       </main>

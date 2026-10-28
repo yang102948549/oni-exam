@@ -61,13 +61,22 @@ fn run_worker(app: tauri::AppHandle, mut request: Value) -> Result<Value, String
 
 #[tauri::command]
 async fn engine(app: tauri::AppHandle, state: tauri::State<'_, EngineState>, request: Value) -> Result<Value, String> {
-    let action = request["action"].as_str().ok_or("작업이 지정되지 않았습니다.")?;
-    if !["inspect", "preview", "convert", "history", "environment", "save_settings", "settings"].contains(&action) { return Err("지원하지 않는 작업입니다.".into()); }
-    let guard = if action == "convert" {
-        if state.busy.compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst).is_err() { return Err("진행 중인 변환이 있습니다.".into()); }
+    let action = request["action"].as_str().ok_or("작업이 지정되지 않았습니다.")?.to_string();
+    if !["inspect", "preview", "convert", "history", "environment", "install_fonts", "check_update", "install_update", "save_settings", "settings"].contains(&action.as_str()) { return Err("지원하지 않는 작업입니다.".into()); }
+    let guard = if action == "convert" || action == "install_update" {
+        if state.busy.compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst).is_err() { return Err("진행 중인 작업이 있습니다.".into()); }
         Some(BusyGuard(state.busy.clone()))
     } else { None };
-    tauri::async_runtime::spawn_blocking(move || { let _guard = guard; run_worker(app, request) }).await.map_err(|e| e.to_string())?
+    let app_clone = app.clone();
+    let res = tauri::async_runtime::spawn_blocking(move || { let _guard = guard; run_worker(app_clone, request) }).await.map_err(|e| e.to_string())??;
+    if action == "install_update" && res["launched"].as_bool() == Some(true) {
+        let app_exit = app.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(600));
+            app_exit.exit(0);
+        });
+    }
+    Ok(res)
 }
 
 #[tauri::command]

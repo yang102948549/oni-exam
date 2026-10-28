@@ -11,8 +11,8 @@ from xml.sax.saxutils import escape
 ROOT = Path(__file__).resolve().parent.parent
 ap = argparse.ArgumentParser()
 ap.add_argument('--out', default=str(ROOT / 'output/native_p3/국어_1-3페이지.hwpx'))
-ap.add_argument('--ratio', type=int, default=91)
-ap.add_argument('--spacing', type=int, default=-3)
+ap.add_argument('--ratio', type=int, default=95)
+ap.add_argument('--spacing', type=int, default=-5)
 ap.add_argument('--pratio', type=int, default=None)
 ap.add_argument('--pspacing', type=int, default=None)
 ap.add_argument('--footer', type=float, default=0)
@@ -41,8 +41,8 @@ ap.add_argument('--box-off', type=float, default=0.0, dest='box_off')
 ap.add_argument('--top2', type=float, default=156)
 ap.add_argument('--hdr2', type=float, default=108)
 args = ap.parse_args()
-if args.pratio is None: args.pratio = 92
-if args.pspacing is None: args.pspacing = -3
+if args.pratio is None: args.pratio = 95
+if args.pspacing is None: args.pspacing = -5
 
 NS = ('xmlns:hc="http://www.hancom.co.kr/hwpml/2011/core" '
       'xmlns:hh="http://www.hancom.co.kr/hwpml/2011/head" '
@@ -52,13 +52,12 @@ PT = 100
 def u(pt): return round(pt * PT)
 
 # ------------------------------------------------------------------ fonts
-FONTS = ['KoPub World 바탕체', 'KoPub World 바탕체', 'KoPub World 돋움체',
-         'KoPub World 돋움체', 'KoPub World 바탕체', 'KoPub World 돋움체', 'KoPub World 돋움체']
-F_SIN, F_GYEON, F_JUNG, F_GYEONGO, F_TIMES, F_HEAD = range(6)
-F_NUM = 6
+FONTS = ['신명 중명조', '한양견명조', '신명 태고딕',
+         'HY견고딕', 'Times New Roman', 'HY헤드라인M', '문체부 돋음체', 'HyhwpEQ']
+F_SIN, F_GYEON, F_JUNG, F_GYEONGO, F_TIMES, F_HEAD, F_TBL, F_NUM = range(8)
 LANGS = ['HANGUL', 'LATIN', 'HANJA', 'JAPANESE', 'OTHER', 'SYMBOL', 'USER']
 def fontfaces():
-    fam = {0: 'FCAT_MYUNGJO', 1: 'FCAT_MYUNGJO', 2: 'FCAT_GOTHIC', 3: 'FCAT_GOTHIC', 4: 'FCAT_MYUNGJO', 5: 'FCAT_GOTHIC', 6: 'FCAT_GOTHIC'}
+    fam = {0: 'FCAT_MYUNGJO', 1: 'FCAT_MYUNGJO', 2: 'FCAT_GOTHIC', 3: 'FCAT_GOTHIC', 4: 'FCAT_MYUNGJO', 5: 'FCAT_GOTHIC', 6: 'FCAT_GOTHIC', 7: 'FCAT_MYUNGJO'}
     out = [f'<hh:fontfaces itemCnt="{len(LANGS)}">']
     for lg in LANGS:
         out.append(f'<hh:fontface lang="{lg}" fontCnt="{len(FONTS)}">')
@@ -103,7 +102,7 @@ def charprops():
         out.append(
             f'<hh:charPr id="{i}" height="{u(size)}" textColor="{color}" shadeColor="none" useFontSpace="{1 if font == F_TIMES else 0}" '
             f'useKerning="0" symMark="NONE" borderFillIDRef="{BF_BOX_THIN if box else BF_NONE2}">'
-            f'<hh:fontRef hangul="{font}" latin="{font}" hanja="{font}" japanese="{font}" other="{F_NUM}" symbol="{F_NUM}" user="{F_NUM}" /><hh:ratio {a(ratio)} /><hh:spacing {a(spacing)} />'
+            f'<hh:fontRef hangul="{font}" latin="{font}" hanja="{font}" japanese="{font}" other="{font}" symbol="{font}" user="{font}" /><hh:ratio {a(ratio)} /><hh:spacing {a(spacing)} />'
             f'<hh:relSz {a(100)} /><hh:offset {a(0)} />'
             + ('<hh:italic />' if ital else '') + ('<hh:bold />' if bold else '')
             + f'<hh:underline type="{"BOTTOM" if ul else "NONE"}" shape="SOLID" color="#000000" />'
@@ -174,10 +173,11 @@ def nid():
     _id[0] += 1; return _id[0]
 
 def run(text, cp):
-    # Latin letters retain the body/title family; numbers and symbols use F_NUM (KoPub World 돋움체).
+    # Digits use F_NUM (HyhwpEQ) in body/table text while header/stem numbers retain their display font.
+    use_eq_num = CHARS[cp][0] in (F_SIN, F_TBL) and CHARS[cp][1] <= 13.5
     segments = []
     for ch in text:
-        numeric = unicodedata.category(ch)[0] in 'NPS'
+        numeric = use_eq_num and ('0' <= ch <= '9')
         if segments and segments[-1][0] == numeric: segments[-1][1] += ch
         else: segments.append([numeric, ch])
     out = []
@@ -359,19 +359,19 @@ for _i, _b in enumerate(blocks):
 FCLS = {'head': F_HEAD, 'sin': F_SIN, 'gyeon': F_GYEON, 'gyeongo': F_GYEONGO, 'jung': F_JUNG, 'times': F_TIMES, 'sgraphic': F_JUNG}
 
 def run_char(r, kind, adv=None, tr=None):
+    if kind == 'table' and r['f'] != 'times':
+        SCALE[id(r)] = 1.0
+        return char(F_TBL, 11.5, 95, -5, bold=r.get('b', False), ital=r.get('i', False), ul=r['ul'], box=r['box'])
     inbox = kind in ('passage', 'label', 'bogi', 'bogi_item', 'bogi_title', 'notice')
     ratio = args.pratio if inbox else args.ratio
     spacing = args.pspacing if inbox else args.spacing
     if r['f'] == 'times':
         ratio, spacing = (max(88, min(100, round(tr * 100 * 0.993))) if tr and tr < 1.0 else args.tratio), 0
-    if adv and r['f'] != 'times' and r['s'] <= 13.5:
-        ratio, spacing = max(70, min(105, int(adv / r['s'] * 100 * args.advk))), 0
     if r['f'] in ('gyeongo', 'jung') and r['s'] > 15: ratio, spacing = 100, 0
     size = r['s']
-    if size <= 13.5 and (ratio + spacing) != 100:      # 장평 100으로 두고 같은 글자 폭이 되도록 글자 크기를 줄인다
-        size = max(7.0, round(size * (ratio + spacing) / 100, 1)); ratio, spacing = 100, 0
-    SCALE[id(r)] = size / r['s']
-    return char(F_JUNG if kind == 'bogi_title' else FCLS[r['f']], size, ratio, spacing, bold=r.get('b', False), ital=r.get('i', False), ul=r['ul'], box=r['box'])
+    SCALE[id(r)] = 1.0
+    font_id = F_JUNG if kind in ('bogi_title', 'tagbox') else FCLS[r['f']]
+    return char(font_id, size, ratio, spacing, bold=r.get('b', False), ital=r.get('i', False), ul=r['ul'], box=r['box'])
 
 SCALE = {}
 def credit_xml():
@@ -485,7 +485,7 @@ def pic_xml(b, fl=None):
 def table_xml(b, prev_pt):
     """영어 표: 머리 행 + 데이터 행. 위·아래 굵은 선, 머리 아래 가는 선."""
     bnd = b['bounds']; widths = [bnd[i + 1] - bnd[i] for i in range(len(bnd) - 1)]
-    cp = char(F_TIMES, 12.2, 100, 0); cpb = char(F_TIMES, 12.2, 100, 0, bold=True)
+    cp = char(F_TBL, 11.5, 95, -5); cpb = char(F_TBL, 11.5, 95, -5, bold=True)
     pp = para('CENTER', line=15)
     st = style_for('table')
     def cellp(t, c): return (f'<hp:p id="{nid()}" paraPrIDRef="{pp}" styleIDRef="{st}" pageBreak="0" columnBreak="0" merged="0">'
@@ -556,7 +556,7 @@ def choicetable_xml(b, prev_pt):
 def gtable_xml(b, prev_pt, fl=None):
     xs, ys = b['xs'], b['ys']
     widths = [xs[i + 1] - xs[i] for i in range(len(xs) - 1)]; heights = [ys[i + 1] - ys[i] for i in range(len(ys) - 1)]
-    st = style('표 칸', 'TableCell', para('CENTER', line=14, atleast=True), char())
+    st = style('표 칸', 'TableCell', para('CENTER', line=14, atleast=True), char(F_TBL, 11.5, 95, -5))
     pp = STYLES[st][2]
     def cell_p(runs):
         body = ''
