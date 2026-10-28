@@ -4,7 +4,7 @@
 - 줄바꿈과 쪽/단 넘김은 한글 조판에 맡긴다.
 usage: python scripts/build_hwpx_p1.py [--out PATH] [--ratio 95] [--spacing -2] [--probe]
 """
-import argparse, re, zipfile
+import argparse, re, zipfile, unicodedata
 from pathlib import Path
 from xml.sax.saxutils import escape
 
@@ -18,6 +18,7 @@ ap.add_argument('--pspacing', type=int, default=None)
 ap.add_argument('--footer', type=float, default=0)
 ap.add_argument('--nonlatin', default='BREAK_WORD')
 ap.add_argument('--subject', default='국어')
+ap.add_argument('--title', default='2026학년도 대학수학능력시험 문제지')
 ap.add_argument('--period', default='제1 교시')
 ap.add_argument('--total', default='20')
 ap.add_argument('--credit', default='Oni exam')
@@ -25,7 +26,7 @@ ap.add_argument('--preset', default='')
 ap.add_argument('--prevk', type=float, default=1.0)
 ap.add_argument('--adj', default='')
 ap.add_argument('--area', default='사회탐구')
-ap.add_argument('--eqfont', default='HYhwpEQ')
+ap.add_argument('--eqfont', default='HyhwpEQ')
 ap.add_argument('--advk', type=float, default=0.995)
 ap.add_argument('--biggap', type=float, default=1.0)
 ap.add_argument('--sub', default='')
@@ -51,11 +52,13 @@ PT = 100
 def u(pt): return round(pt * PT)
 
 # ------------------------------------------------------------------ fonts
-FONTS = ['HY신명조', 'HY견명조', 'HY중고딕', 'HY견고딕', 'Times New Roman', 'HY헤드라인M']
+FONTS = ['KoPub World 바탕체', 'KoPub World 바탕체', 'KoPub World 돋움체',
+         'KoPub World 돋움체', 'KoPub World 바탕체', 'KoPub World 돋움체', 'KoPub World 돋움체']
 F_SIN, F_GYEON, F_JUNG, F_GYEONGO, F_TIMES, F_HEAD = range(6)
+F_NUM = 6
 LANGS = ['HANGUL', 'LATIN', 'HANJA', 'JAPANESE', 'OTHER', 'SYMBOL', 'USER']
 def fontfaces():
-    fam = {0: 'FCAT_MYUNGJO', 1: 'FCAT_MYUNGJO', 2: 'FCAT_GOTHIC', 3: 'FCAT_GOTHIC', 4: 'FCAT_MYUNGJO', 5: 'FCAT_GOTHIC'}
+    fam = {0: 'FCAT_MYUNGJO', 1: 'FCAT_MYUNGJO', 2: 'FCAT_GOTHIC', 3: 'FCAT_GOTHIC', 4: 'FCAT_MYUNGJO', 5: 'FCAT_GOTHIC', 6: 'FCAT_GOTHIC'}
     out = [f'<hh:fontfaces itemCnt="{len(LANGS)}">']
     for lg in LANGS:
         out.append(f'<hh:fontface lang="{lg}" fontCnt="{len(FONTS)}">')
@@ -100,7 +103,7 @@ def charprops():
         out.append(
             f'<hh:charPr id="{i}" height="{u(size)}" textColor="{color}" shadeColor="none" useFontSpace="{1 if font == F_TIMES else 0}" '
             f'useKerning="0" symMark="NONE" borderFillIDRef="{BF_BOX_THIN if box else BF_NONE2}">'
-            f'<hh:fontRef hangul="{font}" latin="{font}" hanja="{font}" japanese="{font}" other="{font}" symbol="{font}" user="{font}" /><hh:ratio {a(ratio)} /><hh:spacing {a(spacing)} />'
+            f'<hh:fontRef hangul="{font}" latin="{font}" hanja="{font}" japanese="{font}" other="{F_NUM}" symbol="{F_NUM}" user="{F_NUM}" /><hh:ratio {a(ratio)} /><hh:spacing {a(spacing)} />'
             f'<hh:relSz {a(100)} /><hh:offset {a(0)} />'
             + ('<hh:italic />' if ital else '') + ('<hh:bold />' if bold else '')
             + f'<hh:underline type="{"BOTTOM" if ul else "NONE"}" shape="SOLID" color="#000000" />'
@@ -159,7 +162,7 @@ ST_STEM = style('문항', 'Question', para('LEFT', left=11, indent=-11, line=18.
 ST_CHOICE = style('선택지', 'Choice', para('JUSTIFY', left=21.2, indent=-10, line=18.4), char())
 ST_BOX = style('보기 본문', 'BoxBody', para('JUSTIFY', indent=10.8, line=18.4), char(ratio=args.pratio, spacing=args.pspacing))
 ST_BULLET = style('보기 항목', 'BoxItem', para('JUSTIFY', left=13, indent=-13, line=18.4), char(ratio=args.pratio, spacing=args.pspacing))
-ST_BOXTITLE = style('보기 제목', 'BoxTitle', para('CENTER', line=18.4), char())
+ST_BOXTITLE = style('보기 제목', 'BoxTitle', para('CENTER', line=18.4), char(F_JUNG))
 ST_HOST = style('개체 문단', 'ObjectHost', para('LEFT', pct=True), char())
 ST_HOST_F = style('꼬리말 개체 문단', 'FooterObjectHost', para('CENTER', pct=True, prev=14), char())
 ST_HOST_C = style('개체 문단(가운데)', 'ObjectHostCenter', para('CENTER', pct=True), char())
@@ -171,8 +174,18 @@ def nid():
     _id[0] += 1; return _id[0]
 
 def run(text, cp):
-    body = '<hp:tab width="4000" leader="0" type="1"/>'.join(escape(x) for x in text.split('	'))
-    return f'<hp:run charPrIDRef="{cp}"><hp:t>{body}</hp:t></hp:run>'
+    # Latin letters retain the body/title family; numbers and symbols use F_NUM (KoPub World 돋움체).
+    segments = []
+    for ch in text:
+        numeric = unicodedata.category(ch)[0] in 'NPS'
+        if segments and segments[-1][0] == numeric: segments[-1][1] += ch
+        else: segments.append([numeric, ch])
+    out = []
+    for numeric, value in segments or [(False, '')]:
+        ref = char(F_NUM, *CHARS[cp][1:]) if numeric else cp
+        body = '<hp:tab width="4000" leader="0" type="1"/>'.join(escape(x) for x in value.split('\t'))
+        out.append(f'<hp:run charPrIDRef="{ref}"><hp:t>{body}</hp:t></hp:run>')
+    return ''.join(out)
 
 def P(spans, st, col_break=False, extra_first=''):
     """spans: str | list of (text, charPrIdx)"""
@@ -214,8 +227,8 @@ def table(rows, widths, heights, bfid, margin=(0, 0, 0, 0), outer=(0, 0, 0, 0)):
             f'<hp:inMargin left="{l}" right="{r}" top="{t}" bottom="{b}" />' + ''.join(trs) + '</hp:tbl>')
 
 # ---- 머리 표 (시험명 / 쪽 / 제1 교시 / 국어 영역 / 홀수형)
-hd_title = P('2026학년도 대학수학능력시험 문제지',
-             style('시험명', 'ExamTitle', para('CENTER', line=24), char(F_SIN, 19.4, 100, 0)))
+hd_title = P(args.title,
+             style('시험명', 'ExamTitle', para('CENTER', line=24), char(F_HEAD, 19.4, 100, 0)))
 hd_page = P('1', style('쪽 큰 숫자', 'BigPage', para('RIGHT', line=36), char(F_GYEON, 31.3, 100, 0)))
 box_para = para('CENTER', left=0, right=0, line=24, border=BF_BOX_MID)
 def boxed(inner_p, w, h):
@@ -358,7 +371,7 @@ def run_char(r, kind, adv=None, tr=None):
     if size <= 13.5 and (ratio + spacing) != 100:      # 장평 100으로 두고 같은 글자 폭이 되도록 글자 크기를 줄인다
         size = max(7.0, round(size * (ratio + spacing) / 100, 1)); ratio, spacing = 100, 0
     SCALE[id(r)] = size / r['s']
-    return char(FCLS[r['f']], size, ratio, spacing, bold=r.get('b', False), ital=r.get('i', False), ul=r['ul'], box=r['box'])
+    return char(F_JUNG if kind == 'bogi_title' else FCLS[r['f']], size, ratio, spacing, bold=r.get('b', False), ital=r.get('i', False), ul=r['ul'], box=r['box'])
 
 SCALE = {}
 def credit_xml():

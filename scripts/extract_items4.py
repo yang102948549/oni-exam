@@ -449,7 +449,9 @@ for b in blocks:
         else: m.append(dict(r))
     b['runs'] = m; b['text'] = txt(m)
     if b['type'] == 'label': b['box'] = 'passage' if A.lang == 'ko' else None
-json.dump(blocks, open(A.out, 'w', encoding='utf-8'), ensure_ascii=False, indent=1)
+doc.close()
+with open(A.out, 'w', encoding='utf-8') as out_file:
+    json.dump(blocks, out_file, ensure_ascii=False, indent=1)
 from collections import Counter
 print(len(blocks), 'blocks', dict(Counter(b['type'] for b in blocks)))
 for b in blocks:

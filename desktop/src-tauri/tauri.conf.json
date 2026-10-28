@@ -1,0 +1,24 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Oni Exam",
+  "version": "0.1.0",
+  "identifier": "net.onischool.exam",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://127.0.0.1:1420",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [{ "title": "Oni Exam · 문제지 작업실", "width": 1280, "height": 860, "minWidth": 1000, "minHeight": 720, "center": true }],
+    "security": { "csp": "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; connect-src ipc: http://ipc.localhost" }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["nsis"],
+    "externalBin": ["binaries/oni-engine"],
+    "icon": ["icons/icon.ico", "icons/icon.png"],
+    "shortDescription": "시험지 PDF를 편집 가능한 HWPX로",
+    "windows": { "nsis": { "installMode": "currentUser", "languages": ["Korean"], "displayLanguageSelector": false } }
+  }
+}
