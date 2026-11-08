@@ -1,14 +1,16 @@
 {
   "name": "oni-exam-desktop",
   "private": true,
-  "version": "0.2.0",
+  "version": "0.3.0",
   "type": "module",
   "scripts": {
     "dev": "vite --host 127.0.0.1 --port 1420 --strictPort",
     "build": "tsc && vite build",
     "tauri": "tauri",
     "desktop:dev": "tauri dev",
-    "engine:build": "python scripts/build_engine.py",
+    "parser:install": "npm ci --prefix engine/kordoc --no-audit --no-fund",
+    "parser:build": "python scripts/build_parser.py",
+    "engine:build": "npm run parser:build && python scripts/build_engine.py",
     "desktop:build": "npm run engine:build && tauri build --bundles nsis",
     "test:engine": "python -m unittest discover -s tests -p test_*.py"
   },

@@ -7,11 +7,14 @@ from pathlib import Path
 import pymupdf
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import mathpage
+from ocr_layout import raw_from_ocr, structured_tables
 
 ap = argparse.ArgumentParser()
 ap.add_argument('--math', action='store_true'); ap.add_argument('pdf'); ap.add_argument('first', type=int); ap.add_argument('last', type=int); ap.add_argument('out')
 ap.add_argument('--lang', default='ko'); ap.add_argument('--figdir', default='work/figs')
+ap.add_argument('--analysis', help='kordoc quality and OCR page data')
 A = ap.parse_args()
+analysis = json.loads(Path(A.analysis).read_text(encoding='utf-8')) if A.analysis else {}
 MID, CIRC = 421.0, '①②③④⑤'
 Path(A.figdir).mkdir(parents=True, exist_ok=True)
 
@@ -139,14 +142,22 @@ def flush():
 
 for pn in range(A.first - 1, A.last):
     page = doc[pn]; segs = hsegs(page); raw = page.get_text('rawdict')
+    ocr_page = analysis.get('ocrPages', {}).get(str(pn + 1))
+    if ocr_page:
+        raw, rejected = raw_from_ocr(ocr_page, page.rect.width, page.rect.height)
+        if not raw['blocks'][0]['lines']:
+            raise ValueError(f'{pn + 1}쪽에서 사용할 수 있는 OCR 줄이 없습니다.')
     fig_rects = []; gtabs_all = []
-    if A.math:
+    if A.math and not ocr_page:
         imgs = [pymupdf.Rect(i['bbox']) for i in page.get_image_info()]
         fig_rects = [r for r in mathpage.figure_regions(page) if not any(r.intersects(i) and (r & i).get_area() > 0.4 * min(r.get_area(), i.get_area()) for i in imgs)]
         gtabs_all = mathpage.find_grid_tables(page, top=(245 if A.lang == 'soc' and pn == 0 else 150))
         fig_rects = [r for r in fig_rects if not any((r & g['rect']).get_area() > 0.5 * min(r.get_area(), g['rect'].get_area()) for g in gtabs_all)]
         raw = mathpage.prepare(page, fig_rects + [i for i in imgs if i.y1 > 215], grid_rects=gtabs_all)
     top = (245 if A.lang == 'soc' else 225) if pn == 0 else 150
+    for grid in structured_tables(analysis.get('blocks', []), pn+1, page.rect.height, top):
+        if not any(grid['rect'].intersects(g['rect']) for g in gtabs_all):
+            gtabs_all.append(grid)
     boxes = find_boxes(page) if A.lang == 'soc' else []
     def box_of(y0, x0):
         for i, bx in enumerate(boxes):
@@ -156,6 +167,9 @@ for pn in range(A.first - 1, A.last):
     figs = []
     for k, im in enumerate(page.get_image_info()):
         x0, y0, x1, y1 = im['bbox']
+        # A scanned sheet is a background, not an inline figure. Preserve a
+        # review warning rather than swallowing all OCR lines inside this image.
+        if ocr_page and (x1-x0)*(y1-y0) > page.rect.get_area()*0.5: continue
         if y1 < 215 and (x1 - x0) < 200: continue          # '국어/영어 영역' 제목 이미지
         if (y1 - y0) < 20: continue
         figs.append(['figure', x0, y0, x1, y1, k])
@@ -214,7 +228,9 @@ for pn in range(A.first - 1, A.last):
     for col in (0, 1):
         cl, cr = (88, 410) if col == 0 else (437, 758)
         rules = sorted({round(s[2], 1) for s in segs if s[0] >= cl - 3 and s[1] <= cr + 3 and (s[1] - s[0]) > 200 and 0.5 <= s[3] <= 1.4 and top < s[2] < 1075})
-        if len(rules) >= 3 and rules[-1] - rules[0] < 200: tables.append((col, rules))
+        if len(rules) >= 3 and rules[-1] - rules[0] < 200 and not any(
+                g['rect'].y0 < rules[-1] and g['rect'].y1 > rules[0]
+                and (g['rect'].x0 >= MID) == bool(col) for g in gtabs_all): tables.append((col, rules))
     # ---- 줄 수집(단별)
     def in_textbox(y0, x0):
         return any(r[1] - 2 <= y0 <= r[3] and r[0] - 3 <= x0 <= r[2] for r in textbox_regions)
@@ -309,6 +325,7 @@ for pn in range(A.first - 1, A.last):
                     ci = max(0, min(len(xs) - 2, next((i for i in range(len(xs) - 1) if xs[i] - 1 <= cx < xs[i + 1] + 1), 0)))
                     ri = max(0, min(len(ys) - 2, next((i for i in range(len(ys) - 1) if ys[i] - 1 <= cy < ys[i + 1] + 1), 0)))
                     cells[ri][ci].extend(([sp_run()] if cells[ri][ci] else []) + l['runs'])
+                if 'cells' in g: cells = g['cells']
                 ovr = [r for r in rows if r['y1'] > R.y0 + 2 and r['y0'] < R.y1 - 2 and (r['x1'] <= R.x0 + 3 or r['x0'] >= R.x1 - 3)]
                 fpair = [f for f in figs if ((f[1] + f[3]) / 2 >= MID) == bool(col) and (f[3] <= R.x0 + 3 or f[1] >= R.x1 - 3) and min(f[4], R.y1) - max(f[2], R.y0) > 0.4 * min(f[4] - f[2], R.height)]
                 gfloat = bool(ovr or fpair)

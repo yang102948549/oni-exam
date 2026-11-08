@@ -3,7 +3,7 @@ import { open } from '@tauri-apps/plugin-dialog';
 
 export const native = isTauri();
 export async function engine<T>(request: Record<string, unknown>): Promise<T> {
-  if (!native) throw new Error('파일 변환은 설치된 Oni Exam 앱에서 사용할 수 있습니다.');
+  if (!native) throw new Error('파일 변환은 설치된 Oni Scan 앱에서 사용할 수 있습니다.');
   return invoke<T>('engine', { request });
 }
 export async function choosePdf() {

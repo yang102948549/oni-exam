@@ -62,8 +62,8 @@ fn run_worker(app: tauri::AppHandle, mut request: Value) -> Result<Value, String
 #[tauri::command]
 async fn engine(app: tauri::AppHandle, state: tauri::State<'_, EngineState>, request: Value) -> Result<Value, String> {
     let action = request["action"].as_str().ok_or("작업이 지정되지 않았습니다.")?.to_string();
-    if !["inspect", "preview", "convert", "history", "environment", "install_fonts", "check_update", "install_update", "save_settings", "settings"].contains(&action.as_str()) { return Err("지원하지 않는 작업입니다.".into()); }
-    let guard = if action == "convert" || action == "install_update" {
+    if !["collection_analyze", "collection_save", "inspect", "preview", "convert", "history", "environment", "install_fonts", "check_update", "install_update", "save_settings", "settings"].contains(&action.as_str()) { return Err("지원하지 않는 작업입니다.".into()); }
+    let guard = if action.starts_with("collection_") || action == "convert" || action == "install_update" {
         if state.busy.compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst).is_err() { return Err("진행 중인 작업이 있습니다.".into()); }
         Some(BusyGuard(state.busy.clone()))
     } else { None };
@@ -99,5 +99,5 @@ fn main() {
                 }
             }
         })
-        .run(tauri::generate_context!()).expect("Oni Exam 실행 실패");
+        .run(tauri::generate_context!()).expect("Oni Scan 실행 실패");
 }

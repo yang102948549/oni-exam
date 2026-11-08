@@ -11,7 +11,7 @@ ROOT = APP.parent
 STAGE = Path(tempfile.gettempdir()) / 'oni-exam-build' / 'engine-data'
 WORK = Path(tempfile.gettempdir()) / 'oni-exam-build' / 'pyinstaller'
 SPEC = Path(tempfile.gettempdir()) / 'oni-exam-build'
-for name in ['extract_items4.py', 'build_hwpx_doc4.py', 'mathpage.py', 'mathparse.py']:
+for name in ['extract_items4.py', 'build_hwpx_doc4.py', 'mathpage.py', 'mathparse.py', 'ocr_layout.py']:
     dst = STAGE / 'scripts' / name
     dst.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(ROOT / 'scripts' / name, dst)
@@ -28,7 +28,7 @@ host = subprocess.check_output(['rustc', '-vV'], text=True).split('host: ')[1].s
 cmd = [sys.executable, '-m', 'PyInstaller', '--noconfirm', '--clean', '--onefile', '--console',
        '--name', 'oni-engine-' + host, '--distpath', str(APP / 'src-tauri' / 'binaries'),
        '--workpath', str(WORK), '--specpath', str(SPEC),
-       '--paths', str(ROOT / 'scripts'), '--hidden-import', 'mathpage', '--hidden-import', 'mathparse',
+       '--paths', str(ROOT / 'scripts'), '--hidden-import', 'mathpage', '--hidden-import', 'mathparse', '--hidden-import', 'ocr_layout',
        '--add-data', str(STAGE / 'scripts') + os.pathsep + 'scripts',
        '--add-data', str(STAGE / 'work') + os.pathsep + 'work',
        '--add-data', str(STAGE / 'fonts') + os.pathsep + 'fonts', str(APP / 'engine' / 'worker.py')]

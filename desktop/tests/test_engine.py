@@ -49,14 +49,18 @@ class EngineTests(unittest.TestCase):
     def test_scan_and_wrong_page_size(self):
         p = self.pdf(text=False)
         self.assertFalse(self.call('inspect', path=str(p))['hasText'])
-        with self.assertRaises(ValueError): self.call('convert', path=str(p), first=1, last=1, subject='국어', outputDir=str(self.root / 'out'))
+        with self.assertRaises(ValueError): self.call('convert', path=str(p), first=1, last=1, subject='국어', ocr='off', outputDir=str(self.root / 'out'))
         q = self.pdf(name='a4.pdf', width=595, height=842)
-        self.assertFalse(self.call('inspect', path=str(q))['compatible'])
+        self.assertTrue(self.call('inspect', path=str(q))['compatible'])
+        result = self.call('convert', path=str(q), first=1, last=1, ocr='off', outputDir=str(self.root / 'out'))
+        with zipfile.ZipFile(result['output']) as z:
+            content = z.read('Contents/section0.xml').decode('utf-8')
+            self.assertIn('Read the following passage', content)
 
     def test_conversion_valid_xml_fonts_history_and_no_overwrite(self):
         p = self.pdf()
         original = p.read_bytes()
-        kwargs = dict(path=str(p), first=1, last=1, subject='영어', math=False, outputDir=str(self.root / '결과'))
+        kwargs = dict(path=str(p), first=1, last=1, subject='영어', layout='exam', math=False, outputDir=str(self.root / '결과'))
         result = self.call('convert', **kwargs)
         self.assertEqual(result['status'], 'done')
         with zipfile.ZipFile(result['output']) as z:
@@ -67,7 +71,9 @@ class EngineTests(unittest.TestCase):
             self.assertTrue(set(worker.FONTS).issubset(faces))
         env = self.call('install_fonts')
         self.assertEqual([f['name'] for f in env['fonts']], worker.FONTS)
-        self.assertTrue(all(f['installed'] for f in env['fonts']))
+        # Font installation depends on host permissions. Document font bindings
+        # are checked above; diagnostics must truthfully report missing fonts.
+        self.assertTrue(all(isinstance(f['installed'], bool) for f in env['fonts']))
         second = self.call('convert', **kwargs)
         self.assertNotEqual(result['output'], second['output'])
         self.assertEqual(p.read_bytes(), original)
@@ -82,6 +88,24 @@ class EngineTests(unittest.TestCase):
         self.assertGreater(worker._ver_tuple('0.2.0'), worker._ver_tuple('0.1.0'))
         with self.assertRaises(ValueError):
             self.call('install_update', downloadUrl='https://example.com/evil.exe')
+
+    def test_general_three_columns_mixed_sizes_and_range(self):
+        p = self.root / 'mixed.pdf'
+        with pymupdf.open() as d:
+            page = d.new_page(width=842, height=595)
+            page.insert_text((40, 60), 'EXCLUDED PAGE')
+            page = d.new_page(width=595, height=842)
+            for x, word in [(40, 'ALPHA'), (225, 'BRAVO'), (410, 'CHARLIE')]:
+                for y in range(100, 350, 25): page.insert_text((x, y), word + ' content')
+            d.save(p)
+        result = self.call('convert', path=str(p), first=2, last=2, ocr='off', outputDir=str(self.root))
+        with zipfile.ZipFile(result['output']) as z:
+            for name in z.namelist():
+                if name.endswith('.xml'): ET.fromstring(z.read(name))
+            content = z.read('Contents/section0.xml').decode('utf-8')
+            for word in ['ALPHA', 'BRAVO', 'CHARLIE']: self.assertIn(word, content)
+            self.assertNotIn('EXCLUDED PAGE', content)
+        self.assertIn('A4 1단', result['message'])
 
 
 if __name__ == '__main__': unittest.main()

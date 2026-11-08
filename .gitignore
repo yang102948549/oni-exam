@@ -15,3 +15,6 @@ desktop/src-tauri/target/
 desktop/src-tauri/binaries/
 desktop/.build/
 desktop/.test-data/
+desktop/engine/kordoc/node_modules/
+desktop/engine/kordoc/node.exe
+desktop/src-tauri/kordoc-runtime/

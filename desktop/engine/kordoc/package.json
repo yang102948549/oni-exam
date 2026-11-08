@@ -1,0 +1,9 @@
+{
+  "name": "oni-exam-parser-runtime",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=20" },
+  "dependencies": {
+    "kordoc": "4.24.54"
+  }
+}

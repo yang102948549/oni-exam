@@ -13,10 +13,12 @@ HWPX 생성에는 한글과 별도 Python 설치가 필요하지 않습니다. H
 
 ## 현재 지원 범위
 
-- 텍스트를 포함하는 842 × 1191pt 수능형 2단 PDF.
+- 일반 PDF: 1단·다단·다른 용지 크기의 문단·표·그림을 kordoc으로 읽어 편집 가능한 A4 1단 HWPX로 재구성합니다. 원본 단 배치와 페이지 수는 유지하지 않습니다.
+- 수능형 PDF: 842 × 1191pt이며 본문 두 단이 확인되면 기존 시험지 조판을 사용합니다. 자동 판별 외에 일반 문서/수능형 시험지를 직접 선택할 수 있습니다. 스캔은 자동 판별 시 일반 문서로 처리합니다.
 - 국어·영어 및 수학·한국사·탐구 과목 설정. 수식·도형 분석은 실험 기능입니다.
 - 원본 페이지 미리보기, 범위 선택, 편집 가능한 HWPX 생성, 작업 기록 검색, 파일/폴더 열기.
-- 스캔 OCR, 다른 판형 자동 분석, HWPX 결과 자체의 앱 내 렌더링은 포함하지 않습니다.
+- 로컬 한국어 OCR: 자동/전체/OCR 끄기. 최초 모델 다운로드에는 인터넷이 필요하며 이후 캐시를 사용합니다. 문서는 외부로 전송하지 않습니다. HWPX 결과 자체의 앱 내 렌더링은 포함하지 않습니다.
+- OCR 글꼴·문자 폭은 추정값입니다. 시험지 모드의 스캔 배경 속 그림·복잡한 표·수식은 완전 복원하지 못할 수 있습니다. 일반 문서 모드를 우선 사용하고 결과를 확인하세요. 단순 표는 구조화 JSON으로 보완하지만 병합·중첩 표는 시험지 어댑터에서 강제로 평탄화하지 않습니다.
 - 기존 추출·조판 엔진을 연결했습니다. 모든 문항의 인식 정확도나 원본과 같은 지면을 보장하지 않습니다. 배포 패키지는 코드 서명하지 않은 테스트 빌드입니다.
 
 ## 저장
@@ -30,6 +32,7 @@ Windows, Node.js, Rust MSVC 도구체인, C++ Build Tools, WebView2, Python 3.11
 ```powershell
 cd desktop
 npm ci
+npm run parser:install
 python -m pip install -r engine/requirements.txt
 npm run engine:build
 npm run desktop:dev
@@ -53,8 +56,13 @@ npm run desktop:build
 - `src/`: Oni 디자인 토큰, React 화면, Tauri IPC 연결.
 - `src-tauri/`: Windows 창·파일 선택·엔진 호출·진행 이벤트·문서 열기.
 - `engine/worker.py`: JSON 입출력, PDF 검사/미리보기, 기존 스크립트 실행, SQLite 기록, 결과 XML 검사.
+- `engine/parsing.py`, `engine/kordoc/parse.mjs`: kordoc 4.24.54 고정 실행, 문서 유형 판별, 품질 진단, OCR, 일반 HWPX 생성. Node는 셸 없이 실행하며 요청당 10분 제한을 둡니다.
+- `../scripts/ocr_layout.py`: OCR 픽셀/기울기 좌표를 PDF 좌표로 변환하고 단순 표를 시험지 그리드로 연결합니다.
+- `scripts/build_parser.py`: Node 실행 파일과 잠금된 의존성을 `kordoc-runtime` 리소스로 묶습니다. 사용자는 Node를 별도로 설치할 필요가 없습니다. OCR 모델은 앱 데이터의 `ocr-models`에 최초 실행 시 받습니다.
 - `scripts/build_engine.py`: 필요한 스크립트와 템플릿만 포함하는 PyInstaller 패키징.
 - `../scripts/extract_items4.py`, `../scripts/build_hwpx_doc4.py`: 실제 추출·조판 엔진.
+
+실제 OCR 통합 검증은 저장소 루트에서 `python -X utf8 desktop/tests/smoke_ocr.py`로 실행합니다. 국어.pdf 첫 쪽을 이미지 PDF로 만든 뒤 일반 문서 경로로 변환합니다. 결과는 `desktop/.test-data/ocr-smoke/`에 저장되며 첫 실행에는 모델 다운로드가 필요합니다. 단위/회귀 테스트는 `npm run test:engine`으로 실행합니다.
 
 ## 디자인 출처
 

@@ -22,9 +22,12 @@ import zipfile
 import xml.etree.ElementTree as ET
 
 import pymupdf
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import parsing
+import collection
 
 ROOT = Path(getattr(sys, '_MEIPASS', Path(__file__).resolve().parents[2]))
-APP_VERSION = '0.2.0'
+APP_VERSION = '0.3.0'
 GITHUB_REPO = 'yang102948549/oni-exam'
 FONTS = ['신명 중명조', '문체부 돋음체', '한양견명조', '신명 태고딕', 'HyhwpEQ']
 BUNDLED_FONTS = [
@@ -143,10 +146,10 @@ def inspect(req):
         sizes = [(round(x.rect.width), round(x.rect.height)) for x in d]
         compatible = all(abs(w - 842) <= 8 and abs(h - 1191) <= 8 for w, h in sizes)
         warnings = []
-        if not text: warnings.append('이미지로 된 PDF입니다. 현재 버전은 텍스트가 포함된 시험지 PDF를 지원합니다.')
-        if not compatible: warnings.append('현재 변환기는 842 × 1191pt 크기의 수능형 2단 문제지에 맞춰져 있습니다. 다른 판형은 변환을 지원하지 않습니다.')
+        if not text: warnings.append('스캔 PDF입니다. 자동 OCR로 글자를 인식합니다. 첫 실행 시 모델 다운로드가 필요합니다.')
+        if not compatible: warnings.append('일반 문서로 변환합니다. 문단·표·그림을 A4 1단으로 재구성합니다.')
         return {'path': str(p), 'name': p.name, 'size': p.stat().st_size, 'pages': len(d), 'subject': subject,
-                'hasText': bool(text), 'compatible': compatible, 'warnings': warnings, 'thumbnail': thumbnail(d, 1)}
+                'hasText': bool(text), 'compatible': True, 'examCompatible': compatible, 'warnings': warnings, 'thumbnail': thumbnail(d, 1)}
 
 
 def run_script(name, args):
@@ -169,12 +172,12 @@ def convert(req, data_dir):
     with doc:
         if not 1 <= first <= last <= len(doc):
             raise ValueError(f'페이지 범위는 1~{len(doc)} 안에서 지정해 주세요.')
-        for i in range(first - 1, last):
-            p = doc[i]
-            if abs(p.rect.width - 842) > 8 or abs(p.rect.height - 1191) > 8:
-                raise ValueError(f'{i + 1}쪽은 지원하는 수능형 판형이 아닙니다.')
-            if not p.get_text().strip():
-                raise ValueError(f'{i + 1}쪽에 추출할 텍스트가 없습니다. 스캔 PDF는 아직 지원하지 않습니다.')
+        layout = req.get('layout', 'auto')
+        if layout not in ('auto', 'exam', 'general'):
+            raise ValueError('문서 유형은 auto, exam, general 중 하나여야 합니다.')
+        use_exam = layout == 'exam' or (layout == 'auto' and parsing.exam_layout(doc, first, last))
+        if use_exam and any(abs(doc[i].rect.width-842)>8 or abs(doc[i].rect.height-1191)>8 for i in range(first-1,last)):
+            raise ValueError('시험지 전용 조판은 842 × 1191pt만 지원합니다. 일반 문서로 선택해 주세요.')
     output_dir = Path(req['outputDir']).expanduser().resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
     job_id = uuid.uuid4().hex
@@ -188,28 +191,35 @@ def convert(req, data_dir):
         ensure_fonts()
         with tempfile.TemporaryDirectory(prefix='oni-', dir=data_dir) as temp:
             temp = Path(temp)
-            items = temp / 'items.json'
-            emit('progress', stage='extract', percent=20, message='문항과 지문을 분석하고 있어요.')
-            lang = 'en' if subject == '영어' else 'soc' if subject in {'사회탐구', '과학탐구', '한국사'} else 'ko'
-            extract_args = [source, first, last, items, '--lang', lang, '--figdir', temp / 'figures']
-            if req.get('math', subject in {'수학', '과학탐구'}): extract_args.append('--math')
-            run_script('extract_items4.py', extract_args)
-            blocks = json.loads(items.read_text(encoding='utf-8'))
-            if not blocks:
-                raise ValueError('변환할 문항을 찾지 못했습니다. 수능형 2단 문제지인지 확인해 주세요.')
-            pages_found = {b['page'] for b in blocks}
-            missing = [p for p in range(first, last + 1) if p not in pages_found]
-            if missing:
-                raise ValueError(f'문항을 찾지 못한 페이지가 있습니다: {missing}. 변환 범위를 확인해 주세요.')
-            emit('progress', stage='build', percent=60, message=f'{len(blocks)}개 문항·지문 블록을 조판하고 있어요.')
-            built = temp / 'result.hwpx'
-            build_args = ['--items', items, '--out', built, '--subject', subject, '--total', last - first + 1,
-                          '--title', str(req.get('title', '수능형 연습 문제지'))[:60],
-                          '--period', {'국어': '제1 교시', '수학': '제2 교시', '영어': '제3 교시'}.get(subject, '제4 교시'),
-                          '--lang', 'en' if subject == '영어' else 'ko', '--credit', 'Oni Exam']
-            if subject in {'사회탐구', '과학탐구', '한국사'}:
-                build_args += ['--preset', 'soc', '--area', subject, '--sub', req.get('subtitle', '')[:60]]
-            run_script('build_hwpx_doc4.py', build_args)
+            if not use_exam:
+                built, blocks, parse_warnings = parsing.general(source, first, last, temp, data_dir,
+                    req.get('ocr', 'auto'), req.get('math', False), emit)
+            else:
+                analysis, parse_warnings = parsing.prepare(source, first, last, temp, data_dir,
+                                                           req.get('ocr', 'auto'), emit)
+                items = temp / 'items.json'
+                emit('progress', stage='extract', percent=40, message='문항과 지문을 분석하고 있어요.')
+                lang = 'en' if subject == '영어' else 'soc' if subject in {'사회탐구', '과학탐구', '한국사'} else 'ko'
+                extract_args = [source, first, last, items, '--lang', lang, '--figdir', temp / 'figures']
+                extract_args += ['--analysis', analysis]
+                if req.get('math', subject in {'수학', '과학탐구'}): extract_args.append('--math')
+                run_script('extract_items4.py', extract_args)
+                blocks = json.loads(items.read_text(encoding='utf-8'))
+                if not blocks:
+                    raise ValueError('변환할 문항을 찾지 못했습니다. 수능형 2단 문제지인지 확인해 주세요.')
+                pages_found = {b['page'] for b in blocks}
+                missing = [p for p in range(first, last + 1) if p not in pages_found]
+                if missing:
+                    raise ValueError(f'문항을 찾지 못한 페이지가 있습니다: {missing}. 변환 범위를 확인해 주세요.')
+                emit('progress', stage='build', percent=60, message=f'{len(blocks)}개 문항·지문 블록을 조판하고 있어요.')
+                built = temp / 'result.hwpx'
+                build_args = ['--items', items, '--out', built, '--subject', subject, '--total', last - first + 1,
+                              '--title', str(req.get('title', '수능형 연습 문제지'))[:60],
+                              '--period', {'국어': '제1 교시', '수학': '제2 교시', '영어': '제3 교시'}.get(subject, '제4 교시'),
+                              '--lang', 'en' if subject == '영어' else 'ko', '--credit', 'Oni Exam']
+                if subject in {'사회탐구', '과학탐구', '한국사'}:
+                    build_args += ['--preset', 'soc', '--area', subject, '--sub', req.get('subtitle', '')[:60]]
+                run_script('build_hwpx_doc4.py', build_args)
             emit('progress', stage='verify', percent=90, message='문서 구조와 저장 파일을 확인하고 있어요.')
             with zipfile.ZipFile(built) as z:
                 if z.testzip() is not None: raise ValueError('생성 문서가 손상되었습니다.')
@@ -224,7 +234,9 @@ def convert(req, data_dir):
                     target.unlink()
                     raise
         with database(data_dir) as db:
-            db.execute('UPDATE jobs SET status=?, message=? WHERE id=?', ('done', f'{len(blocks)}개 블록 · 한글에서 최종 배치를 확인해 주세요.', job_id))
+            message = f'{len(blocks)}개 블록 · 한글에서 최종 배치를 확인해 주세요.'
+            if parse_warnings: message += ' ' + ' '.join(parse_warnings)
+            db.execute('UPDATE jobs SET status=?, message=? WHERE id=?', ('done', message, job_id))
             result = dict(db.execute('SELECT * FROM jobs WHERE id=?', (job_id,)).fetchone())
         emit('progress', stage='done', percent=100, message='문제지가 완성되었어요.')
         return result
@@ -350,6 +362,8 @@ def install_update(req, data_dir: Path) -> dict:
 def handle(req):
     data_dir = Path(req['dataDir']).resolve()
     action = req['action']
+    if action == 'collection_analyze': return collection.analyze(req, data_dir, emit)
+    if action == 'collection_save': return collection.save(req)
     if action == 'inspect': return inspect(req)
     if action == 'preview':
         _, d = pdf_file(req['path'])
